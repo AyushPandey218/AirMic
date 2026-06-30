@@ -7,8 +7,8 @@ AirMic allows you to use your phone's **microphone**, **speaker**, and eventuall
 ![Platform](https://img.shields.io/badge/platform-Windows-blue)
 ![Frontend](https://img.shields.io/badge/frontend-React%20%2B%20Tauri-orange)
 ![Mobile](https://img.shields.io/badge/mobile-Flutter-blue)
-![License](https://img.shields.io/badge/license-MIT-green)
-![Status](https://img.shields.io/badge/status-Active%20Development-purple)
+
+
 
 ---
 
