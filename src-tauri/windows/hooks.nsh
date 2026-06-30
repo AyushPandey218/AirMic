@@ -1,5 +1,7 @@
 !macro NSIS_HOOK_POSTINSTALL
   ; Run the install + rename script — handles VB-Cable A/B installation and device renaming
+  ; Resources are extracted to $INSTDIR\_up_\resources\ by Tauri's NSIS template
   DetailPrint "Installing AirMic audio drivers (VB-Cable A+B)..."
-  nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "$INSTDIR\resources\install_and_rename.ps1" -InstDir "$INSTDIR"'
+  SetOutPath "$INSTDIR\_up_\resources"
+  nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "$INSTDIR\_up_\resources\install_and_rename.ps1" -InstDir "$INSTDIR\_up_"'
 !macroend
