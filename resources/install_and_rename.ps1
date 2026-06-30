@@ -12,8 +12,8 @@ try {
     $cableAExe  = "$cableADir\VBCABLE_Setup_x64.exe"
     if (Test-Path $cableAExe) {
         Write-Host "Installing VB-Cable A: $cableAExe"
-        Start-Process -FilePath $cableAExe -ArgumentList "/S", "/NCRC" -Wait -NoNewWindow -WorkingDirectory $cableADir
-        Write-Host "VB-Cable A install complete."
+        $procA = Start-Process -FilePath $cableAExe -ArgumentList "/S", "/NCRC" -Wait -NoNewWindow -WorkingDirectory $cableADir -PassThru
+        Write-Host "VB-Cable A exit code: $($procA.ExitCode)"
     } else {
         Write-Host "WARNING: VB-Cable A installer not found at $cableAExe"
     }
@@ -25,8 +25,8 @@ try {
     $cableBExe  = "$cableBDir\VBCABLE_Setup_x64.exe"
     if (Test-Path $cableBExe) {
         Write-Host "Installing VB-Cable B: $cableBExe"
-        Start-Process -FilePath $cableBExe -ArgumentList "/S", "/NCRC" -Wait -NoNewWindow -WorkingDirectory $cableBDir
-        Write-Host "VB-Cable B install complete."
+        $procB = Start-Process -FilePath $cableBExe -ArgumentList "/S", "/NCRC" -Wait -NoNewWindow -WorkingDirectory $cableBDir -PassThru
+        Write-Host "VB-Cable B exit code: $($procB.ExitCode)"
     } else {
         Write-Host "WARNING: VB-Cable B installer not found at $cableBExe"
     }
@@ -127,23 +127,53 @@ public class RegistrySecurityHelper
     Add-Type -TypeDefinition $Definition -ErrorAction Stop
 
     # ─────────────────────────────────────────────────────────────────────────
-    # 5. Rename table — match on friendly name OR controller/driver name
+    # 5. List all audio endpoints for diagnostics
+    # ─────────────────────────────────────────────────────────────────────────
+    Write-Host "--- Audio endpoints found ---"
+    $allDevices = @()
+    foreach ($base in @("SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render",
+                        "SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture")) {
+        $baseKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($base)
+        if ($null -eq $baseKey) { continue }
+        foreach ($sub in $baseKey.GetSubKeyNames()) {
+            $propPath = "$base\$sub\Properties"
+            $propKey  = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($propPath)
+            if ($null -eq $propKey) { continue }
+            $friendly   = $propKey.GetValue("{a45c254e-df1c-4efd-8020-67d146a850e0},2")
+            $controller = $propKey.GetValue("{b3f8fa53-0004-438e-9003-51a46e139bfc},6")
+            $propKey.Close()
+            if ($friendly -or $controller) {
+                $allDevices += @{ Base=$base; PropPath=$propPath; Friendly=$friendly; Controller=$controller }
+                Write-Host "  [$($base -replace '.*\\(Render|Capture)', '$1')] Friendly='$friendly'  Controller='$controller'"
+            }
+        }
+        $baseKey.Close()
+    }
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # 6. Rename table — match on friendly name OR controller/driver name
+    #    Matches in order: cable-a/b -> cable (standard) -> vb-audio
     # ─────────────────────────────────────────────────────────────────────────
     $renameRules = @(
-        @{ Base = "SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render";  Match = "cable-a"; NewName = "AirMic Speaker"     },
-        @{ Base = "SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render";  Match = "cable-b"; NewName = "AirMic Mic In"      },
-        @{ Base = "SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture"; Match = "cable-a"; NewName = "AirMic Speaker Out" },
-        @{ Base = "SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture"; Match = "cable-b"; NewName = "AirMic Mic"         }
+        @{ BaseSuffix = "Render";  Match = "cable-a";     NewName = "AirMic Speaker"     },
+        @{ BaseSuffix = "Render";  Match = "cable-b";     NewName = "AirMic Mic In"      },
+        @{ BaseSuffix = "Capture"; Match = "cable-a";     NewName = "AirMic Speaker Out" },
+        @{ BaseSuffix = "Capture"; Match = "cable-b";     NewName = "AirMic Mic"         },
+        # Fallbacks for standard single VB-Cable (no A/B suffix)
+        @{ BaseSuffix = "Render";  Match = "cable";       NewName = "AirMic Speaker"     },
+        @{ BaseSuffix = "Capture"; Match = "cable";       NewName = "AirMic Mic"         }
     )
 
     $renamedCount = 0
+    $alreadyRenamed = @{}
 
     foreach ($rule in $renameRules) {
-        $baseKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($rule.Base)
-        if ($null -eq $baseKey) { Write-Host "Hive not found: $($rule.Base)"; continue }
+        $basePath = "SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\$($rule.BaseSuffix)"
+        $baseKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($basePath)
+        if ($null -eq $baseKey) { continue }
 
         foreach ($sub in $baseKey.GetSubKeyNames()) {
-            $propPath = "$($rule.Base)\$sub\Properties"
+            $propPath = "$basePath\$sub\Properties"
             $propKey  = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($propPath)
             if ($null -eq $propKey) { continue }
 
@@ -155,9 +185,12 @@ public class RegistrySecurityHelper
             $controllerStr = if ($controller) { $controller.ToString().ToLower() } else { "" }
             $matchKey      = $rule.Match.ToLower()
 
+            if ($alreadyRenamed.ContainsKey($propPath)) { continue }
+
             if ($friendlyStr -like "*$matchKey*" -or $controllerStr -like "*$matchKey*") {
                 Write-Host "Renaming '$($rule.NewName)' at $propPath (was: $friendly)"
                 if ([RegistrySecurityHelper]::RenameEndpoint($propPath, $rule.NewName)) {
+                    $alreadyRenamed[$propPath] = $true
                     $renamedCount++
                 }
             }
