@@ -68,6 +68,16 @@ public class RegistrySecurityHelper
     private const uint TOKEN_QUERY             = 0x00000008;
     private const uint SE_PRIVILEGE_ENABLED    = 0x00000002;
 
+    private static RegistryKey OpenHklm(string path, RegistryKeyPermissionCheck permissionCheck, RegistryRights rights)
+    {
+        return RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64).OpenSubKey(path, permissionCheck, rights);
+    }
+
+    private static RegistryKey OpenHklm(string path, bool writable)
+    {
+        return RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64).OpenSubKey(path, writable);
+    }
+
     public static void EnablePrivilege(string privilegeName)
     {
         IntPtr hToken;
@@ -88,7 +98,7 @@ public class RegistrySecurityHelper
         EnablePrivilege("SeRestorePrivilege");
         try
         {
-            RegistryKey key = Registry.LocalMachine.OpenSubKey(subKeyPath,
+            RegistryKey key = OpenHklm(subKeyPath,
                 RegistryKeyPermissionCheck.ReadSubTree, RegistryRights.TakeOwnership);
             if (key == null) { Console.WriteLine("Cannot open (TakeOwnership): " + subKeyPath); return false; }
             RegistrySecurity sec = key.GetAccessControl(AccessControlSections.Owner);
@@ -96,7 +106,7 @@ public class RegistrySecurityHelper
             key.SetAccessControl(sec);
             key.Close();
 
-            key = Registry.LocalMachine.OpenSubKey(subKeyPath,
+            key = OpenHklm(subKeyPath,
                 RegistryKeyPermissionCheck.ReadSubTree, RegistryRights.ChangePermissions);
             if (key == null) { Console.WriteLine("Cannot open (ChangePermissions): " + subKeyPath); return false; }
             sec = key.GetAccessControl(AccessControlSections.Access);
@@ -107,7 +117,7 @@ public class RegistrySecurityHelper
             key.SetAccessControl(sec);
             key.Close();
 
-            key = Registry.LocalMachine.OpenSubKey(subKeyPath, true);
+            key = OpenHklm(subKeyPath, true);
             if (key == null) { Console.WriteLine("Cannot open (Write): " + subKeyPath); return false; }
             // PKEY_Device_FriendlyName = {a45c254e-df1c-4efd-8020-67d146a850e0},2
             key.SetValue("{a45c254e-df1c-4efd-8020-67d146a850e0},2", newFriendlyName, RegistryValueKind.String);
@@ -127,27 +137,34 @@ public class RegistrySecurityHelper
     Add-Type -TypeDefinition $Definition -ErrorAction Stop
 
     # ─────────────────────────────────────────────────────────────────────────
-    # 5. List all audio endpoints for diagnostics
+    # 5. List all audio endpoints for diagnostics (via PSDrive for reliability)
     # ─────────────────────────────────────────────────────────────────────────
     Write-Host "--- Audio endpoints found ---"
     $allDevices = @()
-    foreach ($base in @("SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render",
-                        "SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture")) {
-        $baseKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($base)
-        if ($null -eq $baseKey) { continue }
-        foreach ($sub in $baseKey.GetSubKeyNames()) {
-            $propPath = "$base\$sub\Properties"
-            $propKey  = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($propPath)
-            if ($null -eq $propKey) { continue }
-            $friendly   = $propKey.GetValue("{a45c254e-df1c-4efd-8020-67d146a850e0},2")
-            $controller = $propKey.GetValue("{b3f8fa53-0004-438e-9003-51a46e139bfc},6")
-            $propKey.Close()
+    $basePaths = @{
+        "Render"  = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render"
+        "Capture" = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture"
+    }
+    foreach ($label in $basePaths.Keys) {
+        $psPath = $basePaths[$label]
+        if (-not (Test-Path $psPath)) { Write-Host "  ($label hive not found)"; continue }
+        $guids = Get-ChildItem -Path $psPath -ErrorAction SilentlyContinue
+        if (-not $guids) { Write-Host "  ($label: no device entries)"; continue }
+        foreach ($guid in $guids) {
+            $devPath = Join-Path $psPath $guid.PSChildName
+            $propPath = Join-Path $devPath "Properties"
+            if (-not (Test-Path $propPath)) { continue }
+            $props = Get-ItemProperty -Path $propPath -ErrorAction SilentlyContinue
+            $fKey = "{a45c254e-df1c-4efd-8020-67d146a850e0},2"
+            $cKey = "{b3f8fa53-0004-438e-9003-51a46e139bfc},6"
+            $friendly   = $props.$fKey
+            $controller = $props.$cKey
+            $regPath = "SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\$label\$($guid.PSChildName)\Properties"
             if ($friendly -or $controller) {
-                $allDevices += @{ Base=$base; PropPath=$propPath; Friendly=$friendly; Controller=$controller }
-                Write-Host "  [$($base -replace '.*\\(Render|Capture)', '$1')] Friendly='$friendly'  Controller='$controller'"
+                $allDevices += @{ Label=$label; RegPath=$regPath; Friendly=$friendly; Controller=$controller }
+                Write-Host "  [$label] Friendly='$friendly'  Controller='$controller'"
             }
         }
-        $baseKey.Close()
     }
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -155,47 +172,45 @@ public class RegistrySecurityHelper
     #    Matches in order: cable-a/b -> cable (standard) -> vb-audio
     # ─────────────────────────────────────────────────────────────────────────
     $renameRules = @(
-        @{ BaseSuffix = "Render";  Match = "cable-a";     NewName = "AirMic Speaker"     },
-        @{ BaseSuffix = "Render";  Match = "cable-b";     NewName = "AirMic Mic In"      },
-        @{ BaseSuffix = "Capture"; Match = "cable-a";     NewName = "AirMic Speaker Out" },
-        @{ BaseSuffix = "Capture"; Match = "cable-b";     NewName = "AirMic Mic"         },
-        # Fallbacks for standard single VB-Cable (no A/B suffix)
-        @{ BaseSuffix = "Render";  Match = "cable";       NewName = "AirMic Speaker"     },
-        @{ BaseSuffix = "Capture"; Match = "cable";       NewName = "AirMic Mic"         }
+        @{ Label = "Render";  Match = "cable-a";     NewName = "AirMic Speaker"     },
+        @{ Label = "Render";  Match = "cable-b";     NewName = "AirMic Mic In"      },
+        @{ Label = "Capture"; Match = "cable-a";     NewName = "AirMic Speaker Out" },
+        @{ Label = "Capture"; Match = "cable-b";     NewName = "AirMic Mic"         },
+        @{ Label = "Render";  Match = "cable";       NewName = "AirMic Speaker"     },
+        @{ Label = "Capture"; Match = "cable";       NewName = "AirMic Mic"         }
     )
 
     $renamedCount = 0
     $alreadyRenamed = @{}
 
     foreach ($rule in $renameRules) {
-        $basePath = "SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\$($rule.BaseSuffix)"
-        $baseKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($basePath)
-        if ($null -eq $baseKey) { continue }
-
-        foreach ($sub in $baseKey.GetSubKeyNames()) {
-            $propPath = "$basePath\$sub\Properties"
-            $propKey  = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey($propPath)
-            if ($null -eq $propKey) { continue }
-
-            $friendly   = $propKey.GetValue("{a45c254e-df1c-4efd-8020-67d146a850e0},2")
-            $controller = $propKey.GetValue("{b3f8fa53-0004-438e-9003-51a46e139bfc},6")
-            $propKey.Close()
-
+        $psPath = $basePaths[$rule.Label]
+        if (-not (Test-Path $psPath)) { continue }
+        $guids = Get-ChildItem -Path $psPath -ErrorAction SilentlyContinue
+        if (-not $guids) { continue }
+        foreach ($guid in $guids) {
+            $regPath = "SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\$($rule.Label)\$($guid.PSChildName)\Properties"
+            if ($alreadyRenamed.ContainsKey($regPath)) { continue }
+            $devPath = Join-Path $psPath $guid.PSChildName
+            $propPath = Join-Path $devPath "Properties"
+            if (-not (Test-Path $propPath)) { continue }
+            $props = Get-ItemProperty -Path $propPath -ErrorAction SilentlyContinue
+            $fKey = "{a45c254e-df1c-4efd-8020-67d146a850e0},2"
+            $cKey = "{b3f8fa53-0004-438e-9003-51a46e139bfc},6"
+            $friendly   = $props.$fKey
+            $controller = $props.$cKey
             $friendlyStr   = if ($friendly)   { $friendly.ToString().ToLower()   } else { "" }
             $controllerStr = if ($controller) { $controller.ToString().ToLower() } else { "" }
             $matchKey      = $rule.Match.ToLower()
 
-            if ($alreadyRenamed.ContainsKey($propPath)) { continue }
-
             if ($friendlyStr -like "*$matchKey*" -or $controllerStr -like "*$matchKey*") {
-                Write-Host "Renaming '$($rule.NewName)' at $propPath (was: $friendly)"
-                if ([RegistrySecurityHelper]::RenameEndpoint($propPath, $rule.NewName)) {
-                    $alreadyRenamed[$propPath] = $true
+                Write-Host "Renaming '$($rule.NewName)' at $regPath (was: $friendly)"
+                if ([RegistrySecurityHelper]::RenameEndpoint($regPath, $rule.NewName)) {
+                    $alreadyRenamed[$regPath] = $true
                     $renamedCount++
                 }
             }
         }
-        $baseKey.Close()
     }
 
     Write-Host "Total endpoints renamed: $renamedCount"
