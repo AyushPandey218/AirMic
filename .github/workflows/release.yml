@@ -1,0 +1,125 @@
+﻿name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-desktop:
+    name: Build Windows Installer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Add Windows SDK rc.exe to PATH
+        shell: pwsh
+        run: |
+          $rcPath = (Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter "rc.exe" |
+            Where-Object { $_.FullName -like "*x64*" } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1).DirectoryName
+          echo "$rcPath" >> $env:GITHUB_PATH
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Build Tauri app
+        run: npm run tauri build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ''
+
+      - name: Upload for release
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-exe
+          path: src-tauri/target/release/bundle/nsis/*.exe
+
+  build-android:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.x'
+          channel: 'stable'
+
+      - name: Get Flutter dependencies
+        working-directory: mobile
+        run: flutter pub get
+
+      - name: Build APK
+        working-directory: mobile
+        run: flutter build apk --release --no-tree-shake-icons
+
+      - name: Rename APK
+        run: mv mobile/build/app/outputs/flutter-apk/app-release.apk mobile/build/app/outputs/flutter-apk/AirMic.apk
+
+      - name: Upload for release
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: mobile/build/app/outputs/flutter-apk/AirMic.apk
+
+  release:
+    name: Create GitHub Release
+    needs: [build-desktop, build-android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-exe
+          path: release-assets/
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-apk
+          path: release-assets/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "AirMic ${{ github.ref_name }}"
+          body: |
+            ## AirMic ${{ github.ref_name }}
+
+            ### Downloads
+            | Platform | File |
+            |---|---|
+            | Windows | `AirMic_*_x64-setup.exe` — installer with VB-Cable A+B bundled |
+            | Android | `AirMic.apk` — sideload on your phone |
+
+            ### Setup
+            1. Run the Windows installer as **Administrator** (auto-installs audio drivers + renames devices)
+            2. Install the APK on your Android phone
+            3. Connect both devices to the same WiFi and pair in the app
+          files: release-assets/*
+          draft: false
+          prerelease: false
