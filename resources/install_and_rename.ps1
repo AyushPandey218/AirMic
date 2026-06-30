@@ -8,10 +8,11 @@ try {
     # ─────────────────────────────────────────────────────────────────────────
     # 1. Install VB-Cable A silently
     # ─────────────────────────────────────────────────────────────────────────
-    $cableAExe = "$InstDir\resources\drivers\CableA\VBCABLE_Setup_x64.exe"
+    $cableADir  = "$InstDir\resources\drivers\CableA"
+    $cableAExe  = "$cableADir\VBCABLE_Setup_x64.exe"
     if (Test-Path $cableAExe) {
         Write-Host "Installing VB-Cable A: $cableAExe"
-        Start-Process -FilePath $cableAExe -ArgumentList "/S", "/NCRC" -Wait -NoNewWindow
+        Start-Process -FilePath $cableAExe -ArgumentList "/S", "/NCRC" -Wait -NoNewWindow -WorkingDirectory $cableADir
         Write-Host "VB-Cable A install complete."
     } else {
         Write-Host "WARNING: VB-Cable A installer not found at $cableAExe"
@@ -20,10 +21,11 @@ try {
     # ─────────────────────────────────────────────────────────────────────────
     # 2. Install VB-Cable B silently
     # ─────────────────────────────────────────────────────────────────────────
-    $cableBExe = "$InstDir\resources\drivers\CableB\VBCABLE_Setup_x64.exe"
+    $cableBDir  = "$InstDir\resources\drivers\CableB"
+    $cableBExe  = "$cableBDir\VBCABLE_Setup_x64.exe"
     if (Test-Path $cableBExe) {
         Write-Host "Installing VB-Cable B: $cableBExe"
-        Start-Process -FilePath $cableBExe -ArgumentList "/S", "/NCRC" -Wait -NoNewWindow
+        Start-Process -FilePath $cableBExe -ArgumentList "/S", "/NCRC" -Wait -NoNewWindow -WorkingDirectory $cableBDir
         Write-Host "VB-Cable B install complete."
     } else {
         Write-Host "WARNING: VB-Cable B installer not found at $cableBExe"

@@ -1,6 +1,6 @@
 {
-    "name": "airmic_mobile",
-    "short_name": "airmic_mobile",
+    "name": "Airmic",
+    "short_name": "Airmic",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",

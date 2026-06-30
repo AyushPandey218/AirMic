@@ -18,7 +18,7 @@ class AirMicClientApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'AirMic Mobile',
+      title: 'Airmic',
       debugShowCheckedModeBanner: false,
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: const Color(0xFF080B11),
@@ -1021,7 +1021,7 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
                       ),
                       const SizedBox(height: 16),
                       const Text(
-                        "AirMic Mobile",
+                        "Airmic",
                         style: TextStyle(
                           fontFamily: 'Outfit',
                           fontSize: 28,

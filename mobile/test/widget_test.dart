@@ -8,7 +8,7 @@ void main() {
     await tester.pumpWidget(const AirMicClientApp());
 
     // Verify that the title is rendered.
-    expect(find.text('AirMic Mobile'), findsOneWidget);
+    expect(find.text('Airmic'), findsOneWidget);
     expect(find.text('Connect to PC'), findsOneWidget);
   });
 }
